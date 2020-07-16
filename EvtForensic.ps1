@@ -1,5 +1,5 @@
 ﻿
-
+# table to friendly-ize bugcheck codes / may be stale, not pulled from winerr.h
 $BugcheckCodeTable= @{
 ‘0x00000001’='APC_INDEX_MISMATCH';
 ‘0x00000002’='DEVICE_QUEUE_NOT_BUSY';
@@ -477,97 +477,118 @@ Function Get-WinEventData {
         
             #Some events use other nodes, like 'UserData' on Applocker events...
             $XMLData = $null
-            if( $XMLData = @( $XML.Event.EventData.Data ) )
+            $XMLBin = $null
+
+            if( $XMLData = @( $XML.Event.EventData.data))
             {
+                $XMLBin = @( $XML.Event.EventData.binary)
+
                 For( $i=0; $i -lt $XMLData.count; $i++ )
                 {
                     #We don't want to overwrite properties that might be on the original object, or in another event node.
 
-if ($XMLData[$i].ToString().CompareTo($null))
-{
-                    Add-Member -InputObject $entry -MemberType NoteProperty -name "EventData$($XMLData[$i].name)" -Value $XMLData[$i].'#text' -Force
-}
+                    if ($XMLData[$i].ToString().CompareTo($null))
+                    {
+                        if ($XMLData[$i].name -ne $null) 
+                        { Add-Member -InputObject $entry -MemberType NoteProperty -name "EventData.$($XMLData[$i].name)" -Value $XMLData[$i].'#text' -Force}
+                       else 
+                       {  Add-Member -InputObject $entry -MemberType NoteProperty -name "EventData.Data" -Value $XMLData[$i] -Force  }
+                    }
+
                 }
-            }
+
+                For( $i=0; $i -lt $XMLBin.count; $i++ )
+                {
+                if ($XMLBin[$i] -ne $null) 
+                       {  Add-Member -InputObject $entry -MemberType NoteProperty -name "EventData.Binary" -Value $XMLBin[$i] -Force  }
+                }
+       }
 
             $entry
         }
     }
 }
 
-#path to system event log(s)
-# will parse all evtx files in directory and any subdirectories
-#$g_ResultsPath =  "C:\Users\karlf\Failing BSODs"
+Function Get-EventSpewage {
+    [cmdletbinding()]
+    param(
+        [Parameter(Mandatory=$true, 
+                   ValueFromPipeline=$true,
+                   ValueFromPipelineByPropertyName=$true, 
+                   ValueFromRemainingArguments=$false, 
+                   Position=0 )]
+        $EventEntry
+    ) 
 
-#foreach($path in $g_ResultsPath)
-
-#Get-ChildItem -include SystemEventLogs.evt,*.evtx -Path  $path -recurse | 
-
-#ForEach-Object {write-host	“`r`nParsing $($_.fullname)” -ForegroundColor Yellow
-
-# to use a  filepath
-# $EventEntry = get-winevent  -Path $_.fullname -Oldest -FilterXPath "*[System[
-# to use the current system log
-$gCSExit=0
-$EventEntry = get-winevent System  -Oldest -FilterXPath "*[System[
-                   (EventID=12 and Task=1) or 
-                                                           (EventID=13 and Task=2) or 
-                                                           (EventID=20 and TaskID=31) or 
-                                                           (EventID=16 and Level=2) or 
-                                                           (EventID=47) or 
-                                                           (EventID=506 and Task=157) or
-                                                            (EventID=507 and Task=158) or
-                                                           (EventID=41 and Task=63)  or 
-                                                           (EventID=1001) or (EventID=6008)
-                                                           ]]"  -ErrorAction SilentlyContinue | Get-WinEventData | Select -Property TimeCreated, id, task, level,Message, Eventdata*
-
-foreach ($Event in $EventEntry)
+    Process
 {
+$Tab=[char]9
 
-if ($Event.ID.Equals(507)) {$gCSExit++ }
-             
- if ($Event.Id.Equals(41) -or $Event.Id.Equals(1001) -or $Event.Id.Equals(6008) -or $Event.Id.Equals(16))
-	{
+    foreach ($Event in $EventEntry)
+    {
+    <#  remove spurrious carriage returns from text #>
+    $Event.message = $Event.message -replace "`t|`n|`r","" 
 
-            if ($Event.Id.Equals(41)) 
-            {     
-            
-               Write-Host $Event.TimeCreated $Event.Id $Event.Task $Event.Level $Event.message  -ForegroundColor Red  -NoNewline
-           
-             if ($Event.EventDataBugcheckCode.CompareTo("0")) 
-              {
-              $BugHex = '0x'+'{0:x8}' -f [Convert]::ToInt16($Event.EventDataBugcheckCode,10)
-              $BugcheckFriendlyName = $BugcheckCodeTable[$BugHex.ToString()]
+    switch ($Event.Id)
+        {
+        1   <# returned from a low power state. .....Wake Source: Timer - PwrStateTransitionStressTest.exe#> {
+                Write-Host $Event.TimeCreated $Event.Id $Event.Task $Event.Level $Event.message-Separator $Tab  -ForegroundColor Yellow
+                $Event
+                }
+        16  <#Windows failed to resume from hibernate/sleep #> { 
+                Write-Host $Event.TimeCreated $Event.Id $Event.Task $Event.Level $Event.message -Separator $Tab -ForegroundColor Yellow 
+                }
+        41  <# *something* bad happened #>  {     
+                   Write-Host $Event.TimeCreated $Event.Id $Event.Task $Event.Level $Event.message -Separator $Tab -ForegroundColor Red  
+          
+                 if (-not $Event.EventDataBugcheckCode -ne $null)
+                  { 
+                  $BugHex = '0x'+'{0:x8}' -f [Convert]::ToInt16($Event.'EventData.BugcheckCode',10)
+                  $BugcheckFriendlyName = $BugcheckCodeTable[$BugHex.ToString()]
               
-              Write-host ' Bugcheck' $BugHex  -ForegroundColor Yellow 
-              Write-Host  '    '$BugcheckFriendlyName -ForegroundColor Yellow 
-              Write-host  '     Parameter 1: '  $Event.EventDataBugcheckParameter1 -ForegroundColor Yellow 
-              Write-host  '     Parameter 2: '  $Event.EventDataBugcheckParameter2 -ForegroundColor Yellow 
-              Write-host  '     Parameter 3: '  $Event.EventDataBugcheckParameter3 -ForegroundColor Yellow 
-              Write-host  '     Parameter 4: '  $Event.EventDataBugcheckParameter4 -ForegroundColor Yellow 
-              }
-              elseif (($Event.EventDataSleepProgress) -or (($Event.EventDataConnectedStandbyInProgress)))
-              {
-              $Event
-              }
-           }
+                  Write-host $Tab 'Bugcheck' $BugHex ":" $BugcheckFriendlyName -ForegroundColor Yellow 
+                  Write-host $Tab 'Parameter 1: '  $Event.'EventData.BugcheckParameter1' -ForegroundColor Yellow 
+                  Write-host $Tab 'Parameter 2: '  $Event.'EventData.BugcheckParameter2' -ForegroundColor Yellow 
+                  Write-host $Tab 'Parameter 3: '  $Event.'EventData.BugcheckParameter3' -ForegroundColor Yellow 
+                  Write-host $Tab 'Parameter 4: '  $Event.'EventData.BugcheckParameter4' -ForegroundColor Yellow 
+                 }
 
-            if ($Event.Id.Equals(6008)) { Write-Host $Event.TimeCreated $Event.Id $Event.Task $Event.Level $Event.message  -ForegroundColor Red  }
-            if ($Event.Id.Equals(16)) { Write-Host $Event.TimeCreated $Event.Id $Event.Task $Event.Level $Event.message  -ForegroundColor Yellow }
-            if ($Event.Id.Equals(1001)) { Write-Host $Event.TimeCreated $Event.Id $Event.Task $Event.Level $Event.message -ForegroundColor Green }
-            
-     
- }
- else
-            {
-                Write-Host $Event.TimeCreated $Event.Id $Event.Task $Event.Level $Event.message -ForegroundColor white 
-            }
+                  $Event
+                  Write-host 'Total CS Cycles: ' $gCSExit
+                  $gCSExit=0
+               }
+
+        46  <#Crash dump initialization failed! #> { 
+                Write-Host $Event.TimeCreated $Event.Id $Event.Task $Event.Level $Event.message-Separator $Tab  -ForegroundColor Yellow
+                $Event
+                }
+        506 <# Enter Connected Standby #> {  
+                Write-Host $Event.TimeCreated $Event.Id $Event.Task $Event.Level $Event.message "Lid Open:" $Event.'EventData.LidOpenState' "External Monitor:" $Event.'EventData.ExternalMonitorConnectedState' -Separator $Tab  -ForegroundColor white
+                }
+        507 <# Exit Connected Standby #> {  
+                $gCSExit++ 
+                $durationSleepTime= [int]($EVent.'EventData.SleepDurationInUs'/  60000000)  <# convert microseconds to minutes) #>
+
+                Write-Host $Event.TimeCreated $Event.Id $Event.Task $Event.Level $Event.message  "Minutes Sleeping:"$durationSleepTime -Separator $Tab -ForegroundColor white
+
+                }
+        161 <# Dump file creation failed due to error during dump creation. #> { 
+                Write-Host $Event.TimeCreated $Event.Id $Event.Task $Event.Level $Event.message-Separator $Tab  -ForegroundColor Yellow
+                $Event
+                }
+        1001 <# resume from bugcheck  #> { 
+                Write-Host $Event.TimeCreated $Event.Id $Event.Task $Event.Level $Event.message-Separator $Tab -ForegroundColor Green 
+                }
+        6008 <#previous system shutdown at xxx was unexpected. #> { 
+   Write-Host $Event.TimeCreated $Event.Id $Event.Task $Event.Level $Event.message -Separator $Tab  -ForegroundColor Yellow 
+                }
+            default { 
+                Write-Host $Event.TimeCreated $Event.Id $Event.Task $Event.Level $Event.message -Separator $Tab -ForegroundColor white
+              
+                }
+        }
+    }
 }
-
-Write-host 'Total CS Cycles: ' $gCSExit
-
-
-
 <#
 EventID, TaskID 
 12,1 - System start
@@ -580,17 +601,79 @@ EventID, TaskID
 42,64 Entering Sleep (hibernate)
 107,102 resuming from Sleep (hibernate)
 16, 2 - Windows failed to resume from hibernate/sleep
-*
+46 - Crash dump initialization failed!
 47 - ??
+161 - Dump File Creation Failed
 41,63 - unexpected reboot 
 1001 - resume from bugcheck
-(EventID=12 and Task=1) or
-(EventID=13 and Task=2) or
-(EventID=20 and TaskID=31) or
-(EventID=506 and Task=157) or
-(EventID=507 and Task=158) or
-(EventID=42 and Task=64) or
-(EventID=107and Task=102) or
-(EventID=16 and Level=2) or 
-(EventID=47) or
 #> 
+
+}
+
+#Start of script proper
+
+$gCSExit=0
+
+$files=1  #set Files = 0 for getting system event information from current device, 1 to process a file path.
+if ($files)
+{
+    $g_ResultsPath =  "c:\users\karlf"
+    foreach($path in $g_ResultsPath)
+    {
+    Get-ChildItem -include SystemEventLogs.evt,*.evtx -Path  $path -recurse | 
+
+        ForEach-Object   {
+        write-host	“`r`nParsing $($_.fullname)” -ForegroundColor Yellow
+
+
+         $EventEntry = get-winevent  -Path $_.fullname -Oldest -FilterXPath "*[System[
+                                                            (EventID=12 and Task=1) or 
+                                                            (EventID=13 and Task=2) or 
+                                                            (EventID=16 and Level=2) or 
+                                                            (EventID=20 and TaskID=31) or 
+                                                            (EventID=41 and Task=63)  or 
+                                                            (EventID=42 and Task=64) or
+                                                            (EventID=46) or
+                                                            (EventID=47) or 
+                                                            (EventID=107 and Task=102) or
+                                                            (EventID=161) or
+                                                            (EventID=506 and Task=157) or
+                                                            (EventID=507 and Task=158) or
+                                                            (EventID=1001) or 
+                                                            (EventID=6008)
+                                                           ]]"  -ErrorAction SilentlyContinue | Get-WinEventData | Select -Property TimeCreated, id, task, level,Message, Eventdata*
+
+        }
+
+    }
+}  #code to query event logs from a specified location
+else
+{
+
+$EventEntry = get-winevent System  -Oldest -FilterXPath "*[System[
+                                                            (EventID=1 and Task=0 and Category=4) or 
+                                                            (EventID=12 and Task=1) or 
+                                                            (EventID=13 and Task=2) or 
+                                                            (EventID=16 and Level=2) or 
+                                                            (EventID=20 and TaskID=31) or 
+                                                            (EventID=41 and Task=63)  or 
+                                                            (EventID=42 and Task=64) or
+                                                            (EventID=46) or
+                                                            (EventID=47) or 
+                                                            (EventID=107 and Task=1020 or
+                                                            (EventID=161) or
+                                                            (EventID=506 and Task=157) or
+                                                            (EventID=507 and Task=158) or
+                                                            (EventID=1001) or 
+                                                            (EventID=6008)
+                                                           ]]"  -ErrorAction SilentlyContinue | Get-WinEventData | Select -Property TimeCreated, id, task, level,Message, Eventdata*
+
+
+}  #code to query event logs from current device
+
+Get-EventSpewage($EventEntry)
+
+
+
+
+
