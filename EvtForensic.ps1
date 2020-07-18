@@ -489,7 +489,7 @@ Function Get-WinEventData {
 
                     if ($XMLData[$i].ToString().CompareTo($null))
                     {
-                        if ($XMLData[$i].name -ne $null) 
+                        if ($null -ne $XMLData[$i].name) 
                         { Add-Member -InputObject $entry -MemberType NoteProperty -name "EventData.$($XMLData[$i].name)" -Value $XMLData[$i].'#text' -Force}
                        else 
                        {  Add-Member -InputObject $entry -MemberType NoteProperty -name "EventData.Data" -Value $XMLData[$i] -Force  }
@@ -499,7 +499,7 @@ Function Get-WinEventData {
 
                 For( $i=0; $i -lt $XMLBin.count; $i++ )
                 {
-                if ($XMLBin[$i] -ne $null) 
+                if ($null -ne $XMLBin[$i] ) 
                        {  Add-Member -InputObject $entry -MemberType NoteProperty -name "EventData.Binary" -Value $XMLBin[$i] -Force  }
                 }
        }
@@ -531,13 +531,28 @@ $Tab=[char]9
 
     switch ($Event.Id)
         {
-        1   <# returned from a low power state. .....Wake Source: Timer - PwrStateTransitionStressTest.exe#> {
-                Write-Host $Event.TimeCreated $Event.Id $Event.Task $Event.Level $Event.message-Separator $Tab  -ForegroundColor Yellow
+        1   <# returned from a low power state. .....Wake Source: Timer - PwrStateTransitionStressTest.exe
+            This is becuase events 42 and 107 (enter and exit sleep) get cached in a fashion that they have the same time stamp, and don't give us accurate info.
+            The timestamp is in UTC, and it's a weird one to parse.  ex 2020-07-15T12:44:03.7047735Z   the 'Z' on the end is giving me fits.#> 
+        {
+            if ($null -ne $Event.'EventData.WakeSourceText') 
+                {
+                $SleepDT =  $Event.'EventData.SleepTime'
+                $WakeDT = $Event.'EventData.WakeTime'
+                $Format = ' yyyy-MM-dd HH:mm:ssZ'
+                <#$dt = [datetime]::ParseExact($SleepDT,$Format,$null)#>
+
+                Write-Host $Event.TimeCreated $Event.Id $Event.Task $Event.Level "The System was in hibernation from" $SleepDT "To" $WakeDT -Separator $Tab  -ForegroundColor Yellow
                 $Event
                 }
+        }
         16  <#Windows failed to resume from hibernate/sleep #> { 
                 Write-Host $Event.TimeCreated $Event.Id $Event.Task $Event.Level $Event.message -Separator $Tab -ForegroundColor Yellow 
                 }
+        42 <# Entering Hibernation (sleep) #> {
+        Write-Host $Event.TimeCreated $Event.Id $Event.Task $Event.Level $Event.message -Separator $Tab -ForegroundColor White 
+        }
+
         41  <# *something* bad happened #>  {     
                    Write-Host $Event.TimeCreated $Event.Id $Event.Task $Event.Level $Event.message -Separator $Tab -ForegroundColor Red  
           
@@ -559,9 +574,15 @@ $Tab=[char]9
                }
 
         46  <#Crash dump initialization failed! #> { 
-                Write-Host $Event.TimeCreated $Event.Id $Event.Task $Event.Level $Event.message-Separator $Tab  -ForegroundColor Yellow
+                Write-Host $Event.TimeCreated $Event.Id $Event.Task $Event.Level $Event.message -Separator $Tab  -ForegroundColor Yellow
                 $Event
                 }
+        105 <# Power State Change#> {
+                 Write-Host $Event.TimeCreated $Event.Id $Event.Task $Event.Level $Event.message "Power changed to AC:" $Event.'Eventdata.ACOnline' -Separator $Tab  -ForegroundColor Yellow
+        }
+        107 <# Windows exiting hibernation (sleep) #> {
+        Write-Host $Event.TimeCreated $Event.Id $Event.Task $Event.Level $Event.message $Event.'Eventdata.ProgrammedWakeTimeAC'"To" $Event.'Eventdata.ProgrammedWakeTimeDC' -Separator $Tab -ForegroundColor white 
+        }
         506 <# Enter Connected Standby #> {  
                 Write-Host $Event.TimeCreated $Event.Id $Event.Task $Event.Level $Event.message "Lid Open:" $Event.'EventData.LidOpenState' "External Monitor:" $Event.'EventData.ExternalMonitorConnectedState' -Separator $Tab  -ForegroundColor white
                 }
@@ -627,6 +648,7 @@ if ($files)
 
 
          $EventEntry = get-winevent  -Path $_.fullname -Oldest -FilterXPath "*[System[
+                                                            (EventID=1 and Task=0 and Level=4) or
                                                             (EventID=12 and Task=1) or 
                                                             (EventID=13 and Task=2) or 
                                                             (EventID=16 and Level=2) or 
@@ -635,6 +657,7 @@ if ($files)
                                                             (EventID=42 and Task=64) or
                                                             (EventID=46) or
                                                             (EventID=47) or 
+                                                            (EventID=105) or
                                                             (EventID=107 and Task=102) or
                                                             (EventID=161) or
                                                             (EventID=506 and Task=157) or
